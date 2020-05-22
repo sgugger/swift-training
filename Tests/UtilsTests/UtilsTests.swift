@@ -1,11 +1,11 @@
 import XCTest
 import TensorFlow
 
-@testable import TestUtils
+@testable import Utils
 
 var entropy = ARC4RandomNumberGenerator(seed: 42)
 
-final class TestUtilsTests: XCTestCase {
+final class UtilsTests: XCTestCase {
 
   let dataset = RegressionData(entropy: ARC4RandomNumberGenerator(seed: 42))
   let model = RegressionModel(a: 2.0, b: 3.0)
@@ -67,7 +67,7 @@ final class TestUtilsTests: XCTestCase {
   }
 }
 
-extension TestUtilsTests {
+extension UtilsTests {
   static var allTests = [
     ("testTrainingShapes", testTrainingShapes),
     ("testValidationShapes", testValidationShapes),

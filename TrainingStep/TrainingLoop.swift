@@ -1,4 +1,5 @@
 import TensorFlow
+import Utils
 
 // Workaround https://bugs.swift.org/browse/TF-1122 that prevents us from registering a
 // loss function inside our TrainingLoop struct
@@ -6,8 +7,12 @@ public final class LossFunctionWrapper<Output: Differentiable, Target> {
   public typealias F = @differentiable (Output, @noDerivative Target) -> Tensor<Float> 
   public var f: F
   init(_ f: @escaping F) { self.f = f }
-} 
+}
 
+/// Types whose elements represent a training loop.
+/// 
+/// - Note: This protocol is mainly there to give us an easy type for a generic `TrainingLoop`
+///   and unless you need to rewrite your own training loop entirely, you should use `TrainingLoop`.
 public protocol TrainingLoopProtocol {
   // Associatedtypes
   /// The type of the sequence of epochs for the training data.
@@ -59,10 +64,6 @@ public protocol TrainingLoopProtocol {
   var lastLoss: Tensor<Float>? { get set }
 }
 
-public protocol TrainingLoopCallback {
-  mutating func call<T: TrainingLoopProtocol>(on trainingLoop: T, event: TrainingLoopEvent) throws
-}
-
 /// The events that occur during a call to `fit` in the `TrainingLoop`
 ///
 /// - Note: The method is called `fit` and not `train` because it trains the model and validates it.
@@ -90,15 +91,24 @@ public enum TrainingLoopEvent {
   case batchEnd
 }
 
+/// Types whose elements are callbacks that can inject custom behavior in a training loop.
+public protocol TrainingLoopCallback {
+  /// Inspect `trainingLoop` at `event` and can change its state accordingly.
+  mutating func call<T: TrainingLoopProtocol>(on trainingLoop: T, event: TrainingLoopEvent) throws
+}
+
 /// A generic training loop.
 ///
 /// - Parameter `Training`: the type of the sequence of epochs for training data.
 /// - Parameter `Validation`: the type of the collection of batches for validation.
 /// - Parameter `Target`: the type of the target.
 /// - Parameter `Opt`: the type of the optimizer used.
-public struct TrainingLoop<Training: Sequence, Validation: Collection, Target, Opt: Optimizer>: TrainingLoopProtocol
-where Training.Element: Collection, Training.Element.Element == LabeledData<Opt.Model.Input, Target>,
-  Validation.Element == LabeledData<Opt.Model.Input, Target>, Opt.Model: Module {
+public struct TrainingLoop<
+  Training: Sequence, Validation: Collection, Target, Opt: Optimizer
+>: TrainingLoopProtocol where 
+  Training.Element: Collection, Training.Element.Element == LabeledData<Opt.Model.Input, Target>,
+  Validation.Element == LabeledData<Opt.Model.Input, Target>, Opt.Model: Module 
+{
   // Typealiases
   /// The type of the model.
   public typealias Model = Opt.Model
@@ -153,6 +163,7 @@ where Training.Element: Collection, Training.Element.Element == LabeledData<Opt.
 }
 
 public extension TrainingLoop {
+  /// The default step used for inference.
   mutating func inferenceStep() throws {
     guard let data = lastInput else { return }
     lastOutput = model(data)
@@ -160,6 +171,7 @@ public extension TrainingLoop {
     lastLoss = lossFunction.f(lastOutput!, target)
   }
 
+  /// The default step used for training.
   mutating func trainingStep() throws {
     guard let data = lastInput else { return }
     guard let target = lastTarget else { return }
@@ -173,57 +185,82 @@ public extension TrainingLoop {
   }
 }
 
+/// Control flow of the training loop.
+///
+/// - Note: Each of the "end" event is called after its corresponding "cancel" action for cleanup.
 enum TrainingLoopAction: Error {
-    case cancelBatch
-    case cancelTraining
-    case cancelValidation
-    case cancelEpoch
-    case cancelFit
+  /// Abort actions in the current training/inference step and goes to the next batch.  
+  case cancelBatch
+  /// Abort actions in the current training phase and goes to the validation phase.
+  case cancelTraining
+  /// Abort actions in the current validation phase and goes to the next epoch.
+  case cancelValidation
+  /// Abort actions in the current epoch and goes to the next epoch.
+  case cancelEpoch
+  /// Abort actions in the current fit and ends fitting.
+  case cancelFit
 }
 
-public extension TrainingLoop {
-  mutating func callEvent(_ event: TrainingLoopEvent) throws {
+extension TrainingLoop {
+  /// Call `event` on all callbacks.
+  mutating private func callEvent(_ event: TrainingLoopEvent) throws {
     for i in callbacks.indices {
       try callbacks[i].call(on: self, event: event)
     }
   }
 }
 
+extension TrainingLoop {
+  /// Performs `step` on each of `batches`.
+  mutating private func multipleSteps<Batches: Collection>(
+    on batches: Batches, step: (inout Self) throws -> Void
+  ) throws where Batches.Element == Batch {
+    for batch in batches {
+      (lastInput, lastTarget) = (batch.data, batch.label)
+      do {
+        try callEvent(.batchStart)
+        try step(&self)
+      } catch TrainingLoopAction.cancelBatch {}
+      try callEvent(.batchEnd)
+    }
+  }
+}
+
 public extension TrainingLoop {
-  mutating func fit(for epochs: Int, callbacks: [TrainingLoopCallback],
-                    step: (inout Self) throws -> Void = { try $0.inferenceStep() },
-                    trainingStep: (inout Self) throws -> Void = { try $0.trainingStep() }) throws {
+  /// Fit the model for `epochs` using `callbacks` to customize the default training loop.
+  ///
+  /// - Parameters:
+  ///   - inferenceStep: The step used during the validation phase of each epoch. The default value
+  ///     uses the `inferenceStep` method of `TrainingLoop`.
+  ///   - trainingStep: The step used during the training phase of each epoch. The default value
+  ///     uses the `trainingStep` method of `TrainingLoop`. 
+  mutating func fit(
+    for epochs: Int, callbacks: [TrainingLoopCallback] = [],
+    inferenceStep: (inout Self) throws -> Void = { try $0.inferenceStep() },
+    trainingStep: (inout Self) throws -> Void = { try $0.trainingStep() }
+  ) throws {
     self.callbacks += callbacks
     do{
       try callEvent(.fitStart)
       for batches in training.prefix(epochs) {
         do { 
           try callEvent(.epochStart)
+
+          // Training phase
           do {      
             try callEvent(.trainingStart)
-            for batch in batches {
-              (lastInput, lastTarget) = (batch.data, batch.label)
-              do {
-                try callEvent(.batchStart)
-                try trainingStep(&self)
-              } catch TrainingLoopAction.cancelBatch {}
-              try callEvent(.batchEnd)
-            }
+            try multipleSteps(on: batches, step: trainingStep)
           } catch TrainingLoopAction.cancelTraining {}
           try callEvent(.trainingEnd)
+
+          // Validation phase
           do {   
             try callEvent(.validationStart)
-            for batch in validation {
-              (lastInput, lastTarget) = (batch.data, batch.label)
-              do {
-                try callEvent(.batchStart)
-                try inferenceStep(&self)
-              } catch TrainingLoopAction.cancelBatch {}
-              try callEvent(.batchEnd)
-            }
+            try multipleSteps(on: validation, step: inferenceStep)
           } catch TrainingLoopAction.cancelValidation {}
           try callEvent(.validationEnd)
         } catch TrainingLoopAction.cancelEpoch {}
+
         try callEvent(.epochEnd)
       }
     } catch TrainingLoopAction.cancelFit {}
