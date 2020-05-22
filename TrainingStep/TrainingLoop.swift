@@ -62,6 +62,8 @@ public protocol TrainingLoopProtocol {
   var lastOutput: Output? { get set }
   /// The last loss.
   var lastLoss: Tensor<Float>? { get set }
+  /// Flag that distinguishes training and validation phases.
+  var inTraining: Bool { get set }
 }
 
 /// The events that occur during a call to `fit` in the `TrainingLoop`
@@ -149,16 +151,21 @@ public struct TrainingLoop<
   public var lastOutput: Output? = nil
   /// The last loss.
   public var lastLoss: Tensor<Float>? = nil
+  /// Flag that distinguishes training and validation phases.
+  public var inTraining: Bool = false
       
   /// Creates an instance from `training` and `validation` data, a `model`, an `optimizer` and a
   /// `lossFunction`.
+  ///
+  /// Parameter callbacks: Callbacks that the `TrainingLoop` will use in every call to fit.
   public init(training: Training, validation: Validation, model: Model, optimizer: Opt, 
-              lossFunction: @escaping LossFunction.F) {
+              lossFunction: @escaping LossFunction.F, callbacks: [TrainingLoopCallback] = []) {
     self.training = training
     self.validation = validation
     self.model = model
     self.optimizer = optimizer
     self.lossFunction = LossFunction(lossFunction)
+    self.callbacks = callbacks
   }
 }
 
@@ -188,7 +195,7 @@ public extension TrainingLoop {
 /// Control flow of the training loop.
 ///
 /// - Note: Each of the "end" event is called after its corresponding "cancel" action for cleanup.
-enum TrainingLoopAction: Error {
+public enum TrainingLoopAction: Error {
   /// Abort actions in the current training/inference step and goes to the next batch.  
   case cancelBatch
   /// Abort actions in the current training phase and goes to the validation phase.
@@ -239,7 +246,9 @@ public extension TrainingLoop {
     inferenceStep: (inout Self) throws -> Void = { try $0.inferenceStep() },
     trainingStep: (inout Self) throws -> Void = { try $0.trainingStep() }
   ) throws {
+    let callbacksCount = self.callbacks.count
     self.callbacks += callbacks
+    defer { self.callbacks = Array(self.callbacks.prefix(callbacksCount)) }
     do{
       try callEvent(.fitStart)
       for batches in training.prefix(epochs) {
@@ -247,14 +256,16 @@ public extension TrainingLoop {
           try callEvent(.epochStart)
 
           // Training phase
-          do {      
+          do { 
+            Context.local.learningPhase = .training
             try callEvent(.trainingStart)
             try multipleSteps(on: batches, step: trainingStep)
           } catch TrainingLoopAction.cancelTraining {}
           try callEvent(.trainingEnd)
 
           // Validation phase
-          do {   
+          do {
+            Context.local.learningPhase = .inference
             try callEvent(.validationStart)
             try multipleSteps(on: validation, step: inferenceStep)
           } catch TrainingLoopAction.cancelValidation {}

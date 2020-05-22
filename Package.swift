@@ -14,4 +14,5 @@ let package = Package(
     .target(name: "Utils", path: "Utils"),
     .testTarget(name: "UtilsTests", dependencies: ["Utils"]),
     .target(name: "TrainingStep", dependencies: ["Utils"], path: "TrainingStep"),
+    .testTarget(name: "TrainingStepTests", dependencies: ["Utils", "TrainingStep"]),
   ])
