@@ -4,10 +4,10 @@ import Utils
 
 @testable import TrainingStep
 
-var entropy = ARC4RandomNumberGenerator(seed: 42)
-let data = RegressionData(entropy: entropy)
-let model = RegressionModel(a: 0.0, b: 0.0)
-let optimizer = SGD(for: model, learningRate: 0.1)
+fileprivate let entropy = ARC4RandomNumberGenerator(seed: 42)
+fileprivate let data = RegressionData(entropy: entropy)
+fileprivate let model = RegressionModel(a: 0.0, b: 0.0)
+fileprivate let optimizer = SGD(for: model, learningRate: 0.1)
 
 // For control flow tests
 let batchEvents: [TrainingLoopEvent] = [.batchStart, .batchEnd]
@@ -20,10 +20,10 @@ let validationPhaseEvents: [TrainingLoopEvent] = (
 let epochEvents: [TrainingLoopEvent] = (
   [.epochStart] + trainingPhaseEvents + validationPhaseEvents + [.epochEnd])
 let fitEvents: [TrainingLoopEvent] = (
-  [.fitStart] + epochEvents + epochEvents + [.fitEnd])
+  [.fitStart] + epochEvents + epochEvents + [.fitEnd])  
 
 final class TrainingLoopTests: XCTestCase {
-  
+    
   func testModelLearnsSomething() {
     var trainingLoop = TrainingLoop(
       training: data.trainingEpochs, 

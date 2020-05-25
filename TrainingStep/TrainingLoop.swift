@@ -62,8 +62,12 @@ public protocol TrainingLoopProtocol {
   var lastOutput: Output? { get set }
   /// The last loss.
   var lastLoss: Tensor<Float>? { get set }
-  /// Flag that distinguishes training and validation phases.
-  var inTraining: Bool { get set }
+  /// The number of epochs we are currently fitting for.
+  var epochCount: Int? { get set }
+  /// The index of the current epoch.
+  var epochIndex: Int? { get set }
+  /// The index of the current batch.
+  var batchIndex: Int? { get set }
 }
 
 /// The events that occur during a call to `fit` in the `TrainingLoop`
@@ -151,8 +155,12 @@ public struct TrainingLoop<
   public var lastOutput: Output? = nil
   /// The last loss.
   public var lastLoss: Tensor<Float>? = nil
-  /// Flag that distinguishes training and validation phases.
-  public var inTraining: Bool = false
+  /// The number of epochs we are currently fitting for.
+  public var epochCount: Int? = nil
+  /// The index of the current epoch.
+  public var epochIndex: Int? = nil
+  /// The index of the current batch.
+  public var batchIndex: Int? = nil
       
   /// Creates an instance from `training` and `validation` data, a `model`, an `optimizer` and a
   /// `lossFunction`.
@@ -222,7 +230,8 @@ extension TrainingLoop {
   mutating private func multipleSteps<Batches: Collection>(
     on batches: Batches, step: (inout Self) throws -> Void
   ) throws where Batches.Element == Batch {
-    for batch in batches {
+    for (i, batch) in batches.enumerated() {
+      batchIndex = i
       (lastInput, lastTarget) = (batch.data, batch.label)
       do {
         try callEvent(.batchStart)
@@ -249,9 +258,12 @@ public extension TrainingLoop {
     let callbacksCount = self.callbacks.count
     self.callbacks += callbacks
     defer { self.callbacks = Array(self.callbacks.prefix(callbacksCount)) }
+    epochCount = epochs
+      
     do{
       try callEvent(.fitStart)
-      for batches in training.prefix(epochs) {
+      for (i, batches) in training.prefix(epochs).enumerated() {
+        epochIndex = i
         do { 
           try callEvent(.epochStart)
 
