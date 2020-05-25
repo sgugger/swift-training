@@ -5,6 +5,7 @@ import XCTest
     return [
       testCase(TrainingLoopTests.allTests),
       testCase(RecorderTests.allTests),
+      testCase(SchedulerTests.allTests),
     ]
   }
 #endif
