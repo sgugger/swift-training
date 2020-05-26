@@ -1,7 +1,7 @@
 import TensorFlow
 
 /// The shapes of usual hyperparameters schedule.
-public enum SchedulerShape {
+public enum ScheduleShape {
   case constant
   case cosine
   case linear
@@ -10,7 +10,7 @@ public enum SchedulerShape {
 }
 
 /// Returns a schedule using `shape` from `start` to `end`.
-public func makeSchedule(_ shape: SchedulerShape, from start: Float, to end: Float? = nil
+public func makeSchedule(_ shape: ScheduleShape, from start: Float, to end: Float? = nil
 ) -> (Float) -> Float{
   switch shape {
   case .constant:
@@ -52,7 +52,7 @@ public struct Scheduler: TrainingLoopCallback {
     on trainingLoop: T, event: TrainingLoopEvent
   ) throws {
     switch event {
-    // Set total number of batches at the start of fit.
+    // Sets total number of batches at the start of fit.
     case .fitStart:
       for mockBatches in trainingLoop.training.prefix(1) {
         batchesPerEpoch = mockBatches.count
@@ -60,7 +60,7 @@ public struct Scheduler: TrainingLoopCallback {
       }
       learningRates = []
 
-    // Set the proper learning rate before the training step.
+    // Sets the proper learning rate before the training step.
     case .batchStart:
       if Context.local.learningPhase == .inference { return }
       let iterIndex = trainingLoop.batchIndex! + trainingLoop.epochIndex! * batchesPerEpoch
