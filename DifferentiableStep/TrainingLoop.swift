@@ -95,6 +95,8 @@ public enum TrainingLoopEvent {
   case batchStart
   /// The end of a training or inference step on a batch.
   case batchEnd
+  /// After the backwards pass but before the optimizer update.
+  case updateStart
 }
 
 /// Types whose elements are callbacks that can inject custom behavior in a training loop.
@@ -203,6 +205,7 @@ public extension TrainingLoop {
   /// The step used for training.
   mutating func trainingStep() throws {
     differentiableStep()
+    try callEvent(.updateStart)
     optimizer.update(&model, along: lastGradient!)
   }
 }
@@ -227,10 +230,9 @@ extension TrainingLoop {
   /// Call `event` on all callbacks.
   mutating private func callEvent(_ event: TrainingLoopEvent) throws {
     for i in callbacks.indices {
-      try callbacks[i].call(on: &self, event: event)
-      //var callback = callbacks[i]
-      //try callback.call(on: &self, event: event)
-      //callbacks[i] = callback
+      var callback = callbacks[i]
+      try callback.call(on: &self, event: event)
+      callbacks[i] = callback
     }
   }
 }
