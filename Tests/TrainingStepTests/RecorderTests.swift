@@ -12,18 +12,16 @@ fileprivate let optimizer = SGD(for: model, learningRate: 0.1)
 final class RecorderTests: XCTestCase {
   
   /// A callback that stores the losses  
-  struct LossStorer: TrainingLoopCallback {
+  class LossStorer {
     /// The training losses of each batch.
     var trainingLosses: [Tensor<Float>] = []
     /// The validation losses of each batch.
     var validationLosses: [Tensor<Float>] = []
    
     /// Inspect `trainingLoop` at `event` and can change its state accordingly.
-    public mutating func call<T: TrainingLoopProtocol>(
-      on trainingLoop: T, event: TrainingLoopEvent
-    ) throws {
+    public func handler<L: TrainingLoopProtocol>(_ loop: L, event: TrainingLoopEvent) throws {
       if event == .batchEnd {
-        guard let loss = trainingLoop.lastLoss else { return }
+        guard let loss = loop.lastLoss else { return }
         if Context.local.learningPhase == .training {
           trainingLosses.append(loss)
         } else {
@@ -34,16 +32,17 @@ final class RecorderTests: XCTestCase {
   }
 
   func testLossValues() {
+    let recorder = Recorder()
+    let lossStorer = LossStorer()
+      
     var trainingLoop = TrainingLoop(
       training: data.trainingEpochs, 
       validation: data.validationBatches, 
       model: model, 
       optimizer: optimizer,
       lossFunction: meanSquaredError,
-      callbacks: [Recorder(), LossStorer()])
+      callbacks: [recorder.handler, lossStorer.handler])
     try! trainingLoop.fit(for: 1)
-    let recorder = trainingLoop.callbacks[0] as! Recorder 
-    let lossStorer = trainingLoop.callbacks[1] as! LossStorer
 
     XCTAssertEqual(recorder.trainingLosses.count, 1, 
       "There should be exactly one training loss after fitting for one epoch.")
@@ -93,15 +92,15 @@ final class RecorderTests: XCTestCase {
   func testMetricValues() {
     let thresholds: [Float] = [0.1, 0.01, 0.001]
     let metrics = thresholds.map { AlmostAccuracy(threshold: $0) }
+    let recorder = Recorder(metrics: metrics)
     var trainingLoop = TrainingLoop(
       training: data.trainingEpochs, 
       validation: data.validationBatches, 
       model: model, 
       optimizer: optimizer,
       lossFunction: meanSquaredError,
-      callbacks: [Recorder(metrics: metrics)])
+      callbacks: [recorder.handler])
     try! trainingLoop.fit(for: 2)
-    let recorder = trainingLoop.callbacks[0] as! Recorder
 
     XCTAssertEqual(recorder.metricResults.count, 2, 
       "There should be exactly two arrays of metrics after fitting for two epochs.")

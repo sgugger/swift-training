@@ -14,7 +14,7 @@ public protocol Metric {
 
 /// A callback that computes and stores the training and validation losses, as well as all the 
 /// metrics.
-public struct Recorder: TrainingLoopCallback {
+public class Recorder {
   /// The list of all metrics to compute.
   public var metrics: [Metric]
   /// The training losses of each epoch.
@@ -33,9 +33,7 @@ public struct Recorder: TrainingLoopCallback {
   }
    
   /// Inspect `trainingLoop` at `event` and can change its state accordingly.
-  public mutating func call<T: TrainingLoopProtocol>(
-    on trainingLoop: T, event: TrainingLoopEvent
-  ) throws {
+  public func handler<L: TrainingLoopProtocol>(_ loop: L, event: TrainingLoopEvent) throws {
     switch event {
 
     // Resets the state for the computation of new loss and metrics.
@@ -49,11 +47,11 @@ public struct Recorder: TrainingLoopCallback {
     // Accumulates the latest results for the computation of the loss and metrics.
     case .batchEnd:
       // TODO: deal with the batch size in a more general way.
-      let batchSize = (trainingLoop.lastTarget as! Tensor<Float>).shape[0]
-      summedLosses += trainingLoop.lastLoss! * Float(batchSize)
+      let batchSize = (loop.lastTarget as! Tensor<Float>).shape[0]
+      summedLosses += loop.lastLoss! * Float(batchSize)
       samplesCount += batchSize
       for i in metrics.indices {
-        metrics[i].accumulate(output: trainingLoop.lastOutput!, target: trainingLoop.lastTarget!)
+        metrics[i].accumulate(output: loop.lastOutput!, target: loop.lastTarget!)
       }
 
     // Stores the training loss.
@@ -77,7 +75,7 @@ public struct Recorder: TrainingLoopCallback {
         }
       }
       let namedValues = zip(names, stringValues).map{ "\($0): \($1)" }
-      print("Epoch \(trainingLoop.epochIndex! + 1) -- " + namedValues.joined(separator: ", "))
+      print("Epoch \(loop.epochIndex! + 1) -- " + namedValues.joined(separator: ", "))
 
     default: return
     }

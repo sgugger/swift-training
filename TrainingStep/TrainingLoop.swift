@@ -53,6 +53,10 @@ public protocol TrainingLoopProtocol {
   /// The loss function.
   var lossFunction: LossFunction { get set }
 
+  // Callbacks
+  /// The callbacks used to customize the training loop.
+  var callbacks: [TrainingLoopCallback<Self>] { get set }
+
   // Temporary data
   /// The last input fed to the model.
   var lastInput: Input? { get set }
@@ -66,6 +70,8 @@ public protocol TrainingLoopProtocol {
   var epochCount: Int? { get set }
   /// The index of the current epoch.
   var epochIndex: Int? { get set }
+  /// The number of batches in the current collection of batches.
+  var batchCount: Int? { get set }
   /// The index of the current batch.
   var batchIndex: Int? { get set }
 }
@@ -97,11 +103,9 @@ public enum TrainingLoopEvent {
   case batchEnd
 }
 
-/// Types whose elements are callbacks that can inject custom behavior in a training loop.
-public protocol TrainingLoopCallback {
-  /// Inspect `trainingLoop` at `event` and can change its state accordingly.
-  mutating func call<T: TrainingLoopProtocol>(on trainingLoop: T, event: TrainingLoopEvent) throws
-}
+/// Callbacks that can inject custom behavior in a training loop.
+public typealias TrainingLoopCallback<L: TrainingLoopProtocol>
+  = (_ loop: L, _ event: TrainingLoopEvent) throws -> Void
 
 /// A generic training loop.
 ///
@@ -143,8 +147,8 @@ public struct TrainingLoop<
   public var lossFunction: LossFunction
       
   // Callbacks
-  /// The callbacks used to customize the training loop
-  public var callbacks: [TrainingLoopCallback] = []
+  /// The callbacks used to customize the training loop.
+  public var callbacks: [TrainingLoopCallback<Self>] = []
   
   // Temporary data
   /// The last input fed to the model.
@@ -159,6 +163,8 @@ public struct TrainingLoop<
   public var epochCount: Int? = nil
   /// The index of the current epoch.
   public var epochIndex: Int? = nil
+  /// The number of batches in the current collection of batches.
+  public var batchCount: Int? = nil
   /// The index of the current batch.
   public var batchIndex: Int? = nil
       
@@ -167,7 +173,7 @@ public struct TrainingLoop<
   ///
   /// Parameter callbacks: Callbacks that the `TrainingLoop` will use in every call to fit.
   public init(training: Training, validation: Validation, model: Model, optimizer: Opt, 
-              lossFunction: @escaping LossFunction.F, callbacks: [TrainingLoopCallback] = []) {
+      lossFunction: @escaping LossFunction.F, callbacks: [TrainingLoopCallback<Self>] = []) {
     self.training = training
     self.validation = validation
     self.model = model
@@ -218,9 +224,9 @@ public enum TrainingLoopAction: Error {
 
 extension TrainingLoop {
   /// Call `event` on all callbacks.
-  mutating private func callEvent(_ event: TrainingLoopEvent) throws {
+  mutating private func handleEvent(_ event: TrainingLoopEvent) throws {
     for i in callbacks.indices {
-      try callbacks[i].call(on: self, event: event)
+      try callbacks[i](self, event)
     }
   }
 }
@@ -230,14 +236,15 @@ extension TrainingLoop {
   mutating private func multipleSteps<Batches: Collection>(
     on batches: Batches, step: (inout Self) throws -> Void
   ) throws where Batches.Element == Batch {
+    batchCount = batches.count
     for (i, batch) in batches.enumerated() {
       batchIndex = i
       (lastInput, lastTarget) = (batch.data, batch.label)
       do {
-        try callEvent(.batchStart)
+        try handleEvent(.batchStart)
         try step(&self)
       } catch TrainingLoopAction.cancelBatch {}
-      try callEvent(.batchEnd)
+      try handleEvent(.batchEnd)
     }
   }
 }
@@ -251,7 +258,7 @@ public extension TrainingLoop {
   ///   - trainingStep: The step used during the training phase of each epoch. The default value
   ///     uses the `trainingStep` method of `TrainingLoop`. 
   mutating func fit(
-    for epochs: Int, callbacks: [TrainingLoopCallback] = [],
+    for epochs: Int, callbacks: [TrainingLoopCallback<Self>] = [],
     inferenceStep: (inout Self) throws -> Void = { try $0.inferenceStep() },
     trainingStep: (inout Self) throws -> Void = { try $0.trainingStep() }
   ) throws {
@@ -261,32 +268,32 @@ public extension TrainingLoop {
     epochCount = epochs
       
     do{
-      try callEvent(.fitStart)
+      try handleEvent(.fitStart)
       for (i, batches) in training.prefix(epochs).enumerated() {
         epochIndex = i
         do { 
-          try callEvent(.epochStart)
+          try handleEvent(.epochStart)
 
           // Training phase
           do { 
             Context.local.learningPhase = .training
-            try callEvent(.trainingStart)
+            try handleEvent(.trainingStart)
             try multipleSteps(on: batches, step: trainingStep)
           } catch TrainingLoopAction.cancelTraining {}
-          try callEvent(.trainingEnd)
+          try handleEvent(.trainingEnd)
 
           // Validation phase
           do {
             Context.local.learningPhase = .inference
-            try callEvent(.validationStart)
+            try handleEvent(.validationStart)
             try multipleSteps(on: validation, step: inferenceStep)
           } catch TrainingLoopAction.cancelValidation {}
-          try callEvent(.validationEnd)
+          try handleEvent(.validationEnd)
         } catch TrainingLoopAction.cancelEpoch {}
 
-        try callEvent(.epochEnd)
+        try handleEvent(.epochEnd)
       }
     } catch TrainingLoopAction.cancelFit {}
-    try callEvent(.fitEnd)
+    try handleEvent(.fitEnd)
   }
 }

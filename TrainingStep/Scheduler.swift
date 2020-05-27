@@ -30,46 +30,22 @@ public func makeSchedule(_ shape: ScheduleShape, from start: Float, to end: Floa
   }
 }
 
-/// A callback that will schedule the learning rate.
-public struct Scheduler: TrainingLoopCallback {
-  /// The list of all metrics to compute.
-  public let schedule: (Float) -> Float
-  /// List of all learning rates.
-  public var learningRates: [Float] = []
-
-  /// The total number of batches in the current call to fit.
-  private var batchesCount: Int = 0
-  /// The number of batches in one epoch.
-  private var batchesPerEpoch: Int = 0
-    
-  /// Creates an instance from `schedule`.
-  public init(schedule: @escaping (Float) -> Float) {
-    self.schedule = schedule
-  }
+/// Returns a callback that will change the learning rate according to `schedule`.
+public func learningRateScheduler<L: TrainingLoopProtocol>(
+  _ schedule: @escaping (Float) -> Float) -> TrainingLoopCallback<L> {
+  var batchesCount: Int = 0
    
-  /// Inspect `trainingLoop` at `event` and can change its state accordingly.
-  public mutating func call<T: TrainingLoopProtocol>(
-    on trainingLoop: T, event: TrainingLoopEvent
-  ) throws {
-    switch event {
-    // Sets total number of batches at the start of fit.
-    case .fitStart:
-      for mockBatches in trainingLoop.training.prefix(1) {
-        batchesPerEpoch = mockBatches.count
-        batchesCount = trainingLoop.epochCount! * batchesPerEpoch
-      }
-      learningRates = []
-
+  return {(loop, event) throws -> Void in 
     // Sets the proper learning rate before the training step.
-    case .batchStart:
+    if event == .batchStart {
       if Context.local.learningPhase == .inference { return }
-      let iterIndex = trainingLoop.batchIndex! + trainingLoop.epochIndex! * batchesPerEpoch
+      if batchesCount == 0 {
+        batchesCount = loop.batchCount! * loop.epochCount!
+      }
+      let iterIndex = loop.batchIndex! + loop.epochIndex! * loop.batchCount!
       let percent = Float(iterIndex) / Float(batchesCount-1)
-      var opt = trainingLoop.optimizer
-      opt.learningRate = schedule(percent) as! T.Opt.Scalar
-      learningRates.append(schedule(percent))
-
-    default: return
+      var opt = loop.optimizer
+      opt.learningRate = schedule(percent) as! L.Opt.Scalar
     }
   }
 }

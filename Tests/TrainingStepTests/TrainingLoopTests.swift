@@ -39,36 +39,33 @@ final class TrainingLoopTests: XCTestCase {
       "Model should have learned a better value for b.")
   }
   
-  struct TestAllEvents: TrainingLoopCallback {
+  class TestAllEvents {
     var events: [TrainingLoopEvent] = []
   
-    public mutating func call<T: TrainingLoopProtocol>(
-      on trainingLoop: T, event: TrainingLoopEvent
-    ) throws {
+    public func handler<L: TrainingLoopProtocol>(_ loop: L, event: TrainingLoopEvent) throws {
       events.append(event)
     }
   }
   
   func testAllEvents() {
+    let testEvents = TestAllEvents()
     var trainingLoop = TrainingLoop(
       training: data.trainingEpochs, 
       validation: data.validationBatches, 
       model: model, 
       optimizer: optimizer,
       lossFunction: meanSquaredError,
-      callbacks: [TestAllEvents()])
+      callbacks: [testEvents.handler])
     
     try! trainingLoop.fit(for: 2)
-    let events = (trainingLoop.callbacks[0] as! TestAllEvents).events
-    XCTAssertEqual(events, fitEvents, "The training loop didn't pass through all expected events.")
+    XCTAssertEqual(testEvents.events, fitEvents, 
+      "The training loop didn't pass through all expected events.")
   }
   
-  struct TestCancelBatch: TrainingLoopCallback {
+  class TestCancelBatch {
     var events: [TrainingLoopEvent] = []
     
-    public mutating func call<T: TrainingLoopProtocol>(
-      on trainingLoop: T, event: TrainingLoopEvent
-    ) throws {
+    public func handler<L: TrainingLoopProtocol>(_ loop: L, event: TrainingLoopEvent) throws {
       events.append(event)
       if event == .batchStart {
         throw TrainingLoopAction.cancelBatch
@@ -77,26 +74,24 @@ final class TrainingLoopTests: XCTestCase {
   }
     
   func testCancelBatch() {
+    let testEvents = TestCancelBatch()
     var trainingLoop = TrainingLoop(
       training: data.trainingEpochs, 
       validation: data.validationBatches, 
       model: model, 
       optimizer: optimizer,
       lossFunction: meanSquaredError,
-      callbacks: [TestCancelBatch()])
+      callbacks: [testEvents.handler])
     
     try! trainingLoop.fit(for: 2)
-    let events = (trainingLoop.callbacks[0] as! TestCancelBatch).events
-    XCTAssertEqual(events, fitEvents, 
+    XCTAssertEqual(testEvents.events, fitEvents, 
       "The training loop didn't pass through all expected events.")
   }  
     
-  struct TestCancelTraining: TrainingLoopCallback {
+  class TestCancelTraining {
     var events: [TrainingLoopEvent] = []
     
-    public mutating func call<T: TrainingLoopProtocol>(
-      on trainingLoop: T, event: TrainingLoopEvent
-    ) throws {
+    public func handler<L: TrainingLoopProtocol>(_ loop: L, event: TrainingLoopEvent) throws {
       events.append(event)
       if event == .batchStart && Context.local.learningPhase == .training {
         throw TrainingLoopAction.cancelTraining
@@ -105,30 +100,28 @@ final class TrainingLoopTests: XCTestCase {
   }
     
   func testCancelTraining() {
+    let testEvents = TestCancelTraining()
     var trainingLoop = TrainingLoop(
       training: data.trainingEpochs, 
       validation: data.validationBatches, 
       model: model, 
       optimizer: optimizer,
       lossFunction: meanSquaredError,
-      callbacks: [TestCancelTraining()])
+      callbacks: [testEvents.handler])
     
     try! trainingLoop.fit(for: 2)
-    let events = (trainingLoop.callbacks[0] as! TestCancelTraining).events
     let thisEpochEvents: [TrainingLoopEvent] = (
       [.epochStart, .trainingStart, .batchStart, .trainingEnd] + validationPhaseEvents + [.epochEnd])
     let expectedEvents: [TrainingLoopEvent] = (
       [.fitStart] + thisEpochEvents + thisEpochEvents + [.fitEnd])
-    XCTAssertEqual(events, expectedEvents, 
+    XCTAssertEqual(testEvents.events, expectedEvents, 
       "The training loop didn't pass through all expected events.")
   }
     
-  struct TestCancelValidation: TrainingLoopCallback {
+  class TestCancelValidation {
     var events: [TrainingLoopEvent] = []
     
-    public mutating func call<T: TrainingLoopProtocol>(
-      on trainingLoop: T, event: TrainingLoopEvent
-    ) throws {
+    public func handler<L: TrainingLoopProtocol>(_ loop: L, event: TrainingLoopEvent) throws {
       events.append(event)
       if event == .batchStart && Context.local.learningPhase == .inference {
         throw TrainingLoopAction.cancelValidation
@@ -137,30 +130,28 @@ final class TrainingLoopTests: XCTestCase {
   }
     
   func testCancelValidation() {
+    let testEvents = TestCancelValidation()
     var trainingLoop = TrainingLoop(
       training: data.trainingEpochs, 
       validation: data.validationBatches, 
       model: model, 
       optimizer: optimizer,
       lossFunction: meanSquaredError,
-      callbacks: [TestCancelValidation()])
+      callbacks: [testEvents.handler])
     
     try! trainingLoop.fit(for: 2)
-    let events = (trainingLoop.callbacks[0] as! TestCancelValidation).events
     let thisEpochEvents: [TrainingLoopEvent] = ([.epochStart] + trainingPhaseEvents + 
       [.validationStart, .batchStart, .validationEnd, .epochEnd])
     let expectedEvents: [TrainingLoopEvent] = (
       [.fitStart] + thisEpochEvents + thisEpochEvents + [.fitEnd])
-    XCTAssertEqual(events, expectedEvents, 
+    XCTAssertEqual(testEvents.events, expectedEvents, 
       "The training loop didn't pass through all expected events.")
   }
     
-  struct TestCancelEpoch: TrainingLoopCallback {
+  class TestCancelEpoch {
     var events: [TrainingLoopEvent] = []
     
-    public mutating func call<T: TrainingLoopProtocol>(
-      on trainingLoop: T, event: TrainingLoopEvent
-    ) throws {
+    public func handler<L: TrainingLoopProtocol>(_ loop: L, event: TrainingLoopEvent) throws {
       events.append(event)
       if event == .batchStart {
         throw TrainingLoopAction.cancelEpoch
@@ -169,30 +160,28 @@ final class TrainingLoopTests: XCTestCase {
   }
     
   func testCancelEpoch() {
+    let testEvents = TestCancelEpoch()
     var trainingLoop = TrainingLoop(
       training: data.trainingEpochs, 
       validation: data.validationBatches, 
       model: model, 
       optimizer: optimizer,
       lossFunction: meanSquaredError,
-      callbacks: [TestCancelEpoch()])
+      callbacks: [testEvents.handler])
     
     try! trainingLoop.fit(for: 2)
-    let events = (trainingLoop.callbacks[0] as! TestCancelEpoch).events
     let thisEpochEvents: [TrainingLoopEvent] = (
       [.epochStart, .trainingStart, .batchStart, .epochEnd])
     let expectedEvents: [TrainingLoopEvent] = (
       [.fitStart] + thisEpochEvents + thisEpochEvents + [.fitEnd])
-    XCTAssertEqual(events, expectedEvents, 
+    XCTAssertEqual(testEvents.events, expectedEvents, 
       "The training loop didn't pass through all expected events.")
   }
   
-  struct TestCancelFit: TrainingLoopCallback {
+  class TestCancelFit {
     var events: [TrainingLoopEvent] = []
     
-    public mutating func call<T: TrainingLoopProtocol>(
-      on trainingLoop: T, event: TrainingLoopEvent
-    ) throws {
+    public func handler<L: TrainingLoopProtocol>(_ loop: L, event: TrainingLoopEvent) throws {
       events.append(event)
       if event == .batchStart {
         throw TrainingLoopAction.cancelFit
@@ -201,19 +190,19 @@ final class TrainingLoopTests: XCTestCase {
   }
     
   func testCancelFit() {
+    let testEvents = TestCancelFit()
     var trainingLoop = TrainingLoop(
       training: data.trainingEpochs, 
       validation: data.validationBatches, 
       model: model, 
       optimizer: optimizer,
       lossFunction: meanSquaredError,
-      callbacks: [TestCancelFit()])
+      callbacks: [testEvents.handler])
     
     try! trainingLoop.fit(for: 2)
-    let events = (trainingLoop.callbacks[0] as! TestCancelFit).events
     let expectedEvents: [TrainingLoopEvent] = (
       [.fitStart, .epochStart, .trainingStart, .batchStart, .fitEnd])
-    XCTAssertEqual(events, expectedEvents, 
+    XCTAssertEqual(testEvents.events, expectedEvents, 
       "The training loop didn't pass through all expected events.")
   }
 }
