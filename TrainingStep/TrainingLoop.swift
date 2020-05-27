@@ -225,8 +225,8 @@ public enum TrainingLoopAction: Error {
 extension TrainingLoop {
   /// Call `event` on all callbacks.
   mutating private func handleEvent(_ event: TrainingLoopEvent) throws {
-    for i in callbacks.indices {
-      try callbacks[i](self, event)
+    for callback in callbacks {
+      try callback(self, event)
     }
   }
 }
