@@ -1,8 +1,8 @@
 import TensorFlow
 
 /// A callback that will launch a mock training with exponentially growing learning rates.
-public struct LearningRateFinder: TrainingLoopCallback {
-  /// The minimum learning rate.
+public class LearningRateFinder {
+  /// The schedule of learning rates.
   private let schedule: (Float) -> Float
   /// The number of iterations in the mock training.
   private let iterationCount: Int
@@ -15,7 +15,7 @@ public struct LearningRateFinder: TrainingLoopCallback {
   /// The learning rates at each iteration.
   public var learningRates: [Float] = []
     
-  /// Creates an instance from `schedule`.
+  /// Creates an instance from `minLearningRate` to `maxLearningRate` in `iterationCount`.
   public init(minLearningRate: Float = 1e-7, maxLearningRate: Float = 10, 
               iterationCount: Int = 100, smoothingFactor: Float = 0.98) {
     self.schedule = makeSchedule(.exponential, from: minLearningRate, to: maxLearningRate)
@@ -24,9 +24,7 @@ public struct LearningRateFinder: TrainingLoopCallback {
   }
    
   /// Inspect `trainingLoop` at `event` and can change its state accordingly.
-  public mutating func call<T: TrainingLoopProtocol>(
-    on trainingLoop: inout T, event: TrainingLoopEvent
-  ) throws {
+  public func handler<L: TrainingLoopProtocol>(_ loop: inout L, event: TrainingLoopEvent) throws {
     switch event {
     // Sets total number of batches at the start of fit.
     case .fitStart:
@@ -37,8 +35,8 @@ public struct LearningRateFinder: TrainingLoopCallback {
     // Sets the proper learning rate before the training step.
     case .batchStart:
       let percent = Float(iterationIndex) / Float(iterationCount-1)
-      var opt = trainingLoop.optimizer
-      opt.learningRate = schedule(percent) as! T.Opt.Scalar
+      var opt = loop.optimizer
+      opt.learningRate = schedule(percent) as! L.Opt.Scalar
       learningRates.append(schedule(percent))
         
     // Record the smoothed loss and ends training if necessary.
@@ -47,9 +45,9 @@ public struct LearningRateFinder: TrainingLoopCallback {
       let smoothedLoss: Float
       if let lastLoss = smoothedLosses.last {
         smoothedLoss = (lastLoss * smoothingFactor 
-          + trainingLoop.lastLoss!.scalarized() * (1 - smoothingFactor))
+          + loop.lastLoss!.scalarized() * (1 - smoothingFactor))
       } else {
-        smoothedLoss = trainingLoop.lastLoss!.scalarized()
+        smoothedLoss = loop.lastLoss!.scalarized()
       }
       smoothedLosses.append(smoothedLoss)
       if let minLoss = smoothedLosses.min() {
@@ -76,9 +74,11 @@ extension TrainingLoop {
     maxLearningRate: Float = 10, 
     iterationCount: Int = 100
   ) -> LearningRateFinder {
-    callbacks.append(LearningRateFinder())
-    try! fit(for: iterationCount)
-    let lrFinder = callbacks.popLast() as! LearningRateFinder
+    let lrFinder = LearningRateFinder(
+      minLearningRate: minLearningRate,
+      maxLearningRate: maxLearningRate,
+      iterationCount: iterationCount)
+    try! fit(for: iterationCount, callbacks: [lrFinder.handler])
     return lrFinder
   }
 }

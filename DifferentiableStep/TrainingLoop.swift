@@ -53,19 +53,27 @@ public protocol TrainingLoopProtocol {
   /// The loss function.
   var lossFunction: LossFunction { get set }
 
+  // Callbacks
+  /// The callbacks used to customize the training loop.
+  var callbacks: [TrainingLoopCallback<Self>] { get set }
+
   // Temporary data
   /// The last input fed to the model.
   var lastInput: Input? { get set }
   /// The last target.
   var lastTarget: Target? { get set }
-  /// The last predictions of the model
+  /// The last predictions of the model.
   var lastOutput: Output? { get set }
+  /// The last gradients computed.
+  var lastGradient: Model.TangentVector? { get set }
   /// The last loss.
   var lastLoss: Tensor<Float>? { get set }
   /// The number of epochs we are currently fitting for.
   var epochCount: Int? { get set }
   /// The index of the current epoch.
   var epochIndex: Int? { get set }
+  /// The number of batches in the current collection of batches.
+  var batchCount: Int? { get set }
   /// The index of the current batch.
   var batchIndex: Int? { get set }
 }
@@ -95,17 +103,15 @@ public enum TrainingLoopEvent {
   case batchStart
   /// The end of a training or inference step on a batch.
   case batchEnd
-  /// After the backwards pass but before the optimizer update.
+  /// At the start of the optimizer update, just after the differentiable step.
   case updateStart
+  /// Just after the model prediction at inference, before computing the loss.
+  case inferencePredictionEnd
 }
 
-/// Types whose elements are callbacks that can inject custom behavior in a training loop.
-public protocol TrainingLoopCallback {
-  /// Inspect `trainingLoop` at `event` and can change its state accordingly.
-  mutating func call<T: TrainingLoopProtocol>(
-    on trainingLoop: inout T, event: TrainingLoopEvent
-  ) throws
-}
+/// Callbacks that can inject custom behavior in a training loop.
+public typealias TrainingLoopCallback<L: TrainingLoopProtocol>
+  = (_ loop: inout L, _ event: TrainingLoopEvent) throws -> Void
 
 /// A generic training loop.
 ///
@@ -147,15 +153,15 @@ public struct TrainingLoop<
   public var lossFunction: LossFunction
       
   // Callbacks
-  /// The callbacks used to customize the training loop
-  public var callbacks: [TrainingLoopCallback] = []
+  /// The callbacks used to customize the training loop.
+  public var callbacks: [TrainingLoopCallback<Self>] = []
   
   // Temporary data
   /// The last input fed to the model.
   public var lastInput: Input? = nil
   /// The last target.
   public var lastTarget: Target? = nil
-  /// The last predictions of the model
+  /// The last predictions of the model.
   public var lastOutput: Output? = nil
   /// The last gradients computed.
   public var lastGradient: Model.TangentVector? = nil
@@ -165,6 +171,8 @@ public struct TrainingLoop<
   public var epochCount: Int? = nil
   /// The index of the current epoch.
   public var epochIndex: Int? = nil
+  /// The number of batches in the current collection of batches.
+  public var batchCount: Int? = nil
   /// The index of the current batch.
   public var batchIndex: Int? = nil
       
@@ -173,7 +181,7 @@ public struct TrainingLoop<
   ///
   /// Parameter callbacks: Callbacks that the `TrainingLoop` will use in every call to fit.
   public init(training: Training, validation: Validation, model: Model, optimizer: Opt, 
-              lossFunction: @escaping LossFunction.F, callbacks: [TrainingLoopCallback] = []) {
+      lossFunction: @escaping LossFunction.F, callbacks: [TrainingLoopCallback<Self>] = []) {
     self.training = training
     self.validation = validation
     self.model = model
@@ -184,7 +192,8 @@ public struct TrainingLoop<
 }
 
 public extension TrainingLoop {
-  mutating func differentiableStep() {
+  /// The default differentiable step.
+  mutating func differentiableStep() throws {
     guard let data = lastInput else { return }
     guard let target = lastTarget else { return }
     (lastLoss, lastGradient) = valueWithGradient(at: model) { (model: Model) -> Tensor<Float> in
@@ -199,13 +208,14 @@ public extension TrainingLoop {
     guard let data = lastInput else { return }
     lastOutput = model(data)
     guard let target = lastTarget else { return }
+    try handleEvent(.inferencePredictionEnd)
     lastLoss = lossFunction.f(lastOutput!, target)
   }
 
   /// The step used for training.
-  mutating func trainingStep() throws {
-    differentiableStep()
-    try callEvent(.updateStart)
+  mutating func trainingStep(differentiableStep: (inout Self) throws -> Void) throws {
+    try differentiableStep(&self)
+    try handleEvent(.updateStart)
     optimizer.update(&model, along: lastGradient!)
   }
 }
@@ -228,11 +238,9 @@ public enum TrainingLoopAction: Error {
 
 extension TrainingLoop {
   /// Call `event` on all callbacks.
-  mutating private func callEvent(_ event: TrainingLoopEvent) throws {
-    for i in callbacks.indices {
-      var callback = callbacks[i]
-      try callback.call(on: &self, event: event)
-      callbacks[i] = callback
+  mutating private func handleEvent(_ event: TrainingLoopEvent) throws {
+    for callback in callbacks {
+      try callback(&self, event)
     }
   }
 }
@@ -242,14 +250,15 @@ extension TrainingLoop {
   mutating private func multipleSteps<Batches: Collection>(
     on batches: Batches, step: (inout Self) throws -> Void
   ) throws where Batches.Element == Batch {
+    batchCount = batches.count
     for (i, batch) in batches.enumerated() {
       batchIndex = i
       (lastInput, lastTarget) = (batch.data, batch.label)
       do {
-        try callEvent(.batchStart)
+        try handleEvent(.batchStart)
         try step(&self)
       } catch TrainingLoopAction.cancelBatch {}
-      try callEvent(.batchEnd)
+      try handleEvent(.batchEnd)
     }
   }
 }
@@ -263,9 +272,8 @@ public extension TrainingLoop {
   ///   - trainingStep: The step used during the training phase of each epoch. The default value
   ///     uses the `trainingStep` method of `TrainingLoop`. 
   mutating func fit(
-    for epochs: Int, callbacks: [TrainingLoopCallback] = [],
-    inferenceStep: (inout Self) throws -> Void = { try $0.inferenceStep() },
-    trainingStep: (inout Self) throws -> Void = { try $0.trainingStep() }
+    for epochs: Int, callbacks: [TrainingLoopCallback<Self>] = [],
+    differentiableStep: (inout Self) throws -> Void = { try $0.differentiableStep() }
   ) throws {
     let callbacksCount = self.callbacks.count
     self.callbacks += callbacks
@@ -273,32 +281,33 @@ public extension TrainingLoop {
     epochCount = epochs
       
     do{
-      try callEvent(.fitStart)
+      try handleEvent(.fitStart)
       for (i, batches) in training.prefix(epochs).enumerated() {
         epochIndex = i
         do { 
-          try callEvent(.epochStart)
+          try handleEvent(.epochStart)
 
           // Training phase
           do { 
             Context.local.learningPhase = .training
-            try callEvent(.trainingStart)
-            try multipleSteps(on: batches, step: trainingStep)
+            try handleEvent(.trainingStart)
+            try multipleSteps(on: batches, step: { 
+              try $0.trainingStep(differentiableStep: differentiableStep) })
           } catch TrainingLoopAction.cancelTraining {}
-          try callEvent(.trainingEnd)
+          try handleEvent(.trainingEnd)
 
           // Validation phase
           do {
             Context.local.learningPhase = .inference
-            try callEvent(.validationStart)
-            try multipleSteps(on: validation, step: inferenceStep)
+            try handleEvent(.validationStart)
+            try multipleSteps(on: validation, step: { try $0.inferenceStep() })
           } catch TrainingLoopAction.cancelValidation {}
-          try callEvent(.validationEnd)
+          try handleEvent(.validationEnd)
         } catch TrainingLoopAction.cancelEpoch {}
 
-        try callEvent(.epochEnd)
+        try handleEvent(.epochEnd)
       }
     } catch TrainingLoopAction.cancelFit {}
-    try callEvent(.fitEnd)
+    try handleEvent(.fitEnd)
   }
 }
