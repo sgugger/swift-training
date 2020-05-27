@@ -17,5 +17,5 @@ let package = Package(
     .target(name: "TrainingStep", dependencies: ["Utils"], path: "TrainingStep"),
     .testTarget(name: "TrainingStepTests", dependencies: ["Utils", "TrainingStep"]),
     .target(name: "DifferentiableStep", dependencies: ["Utils"], path: "DifferentiableStep"),
-    //.testTarget(name: "DifferentiableTests", dependencies: ["Utils", "DifferentiableStep"]),
+    .testTarget(name: "DifferentiableStepTests", dependencies: ["Utils", "DifferentiableStep"]),
   ])
