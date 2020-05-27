@@ -35,8 +35,7 @@ public class LearningRateFinder {
     // Sets the proper learning rate before the training step.
     case .batchStart:
       let percent = Float(iterationIndex) / Float(iterationCount-1)
-      var opt = loop.optimizer
-      opt.learningRate = schedule(percent) as! L.Opt.Scalar
+      loop.optimizer.learningRate = schedule(percent) as! L.Opt.Scalar
       learningRates.append(schedule(percent))
         
     // Record the smoothed loss and ends training if necessary.

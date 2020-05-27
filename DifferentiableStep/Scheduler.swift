@@ -44,8 +44,7 @@ public func learningRateScheduler<L: TrainingLoopProtocol>(
       }
       let iterIndex = loop.batchIndex! + loop.epochIndex! * loop.batchCount!
       let percent = Float(iterIndex) / Float(batchesCount-1)
-      var opt = loop.optimizer
-      opt.learningRate = schedule(percent) as! L.Opt.Scalar
+      loop.optimizer.learningRate = schedule(percent) as! L.Opt.Scalar
     }
   }
 }
